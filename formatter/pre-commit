@@ -39,7 +39,7 @@ do
             file_diff=1
         fi
 
-        cp ${file}.tmp ${file}
+        mv ${file}.tmp ${file}
     fi
 done <<< $(git diff --cached --relative --name-only --diff-filter=AM )
 
