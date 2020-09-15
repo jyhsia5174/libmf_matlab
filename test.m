@@ -1,12 +1,10 @@
 % set model parameters
-%lambda_U = 1e-7; lambda_V = 1e-7; d = 4;
-lambda_U = 0.5; lambda_V = 0.5; d = 40;
-tr = 'tr'; va = 'te';
+lambda_U = 0.5; lambda_V = 0.5; d = 8;
+tr = 'small.tr'; va = 'small.va';
 
 % set training algorithm's parameters
-%epsilon = 1e-6;
 epsilon = 1e-5;
-max_iter = 3;
+max_iter = 10;
 
 % prepare training and test data sets
 R = mf_read(tr);
@@ -26,17 +24,14 @@ U_reg = full(sum(IR')' * lambda_U);
 V_reg = full(sum(IR)' * lambda_V);
 
 % learn an FM model
-%rand('seed', 0);
-%U = 2*(0.1/sqrt(d))*(rand(d,m)-0.5);
-%V = 2*(0.1/sqrt(d))*(rand(d,n)-0.5);
+rand('seed', 0);
+U = 2 * (0.1 / sqrt(d)) * (rand(d, m) - 0.5);
+V = 2 * (0.1 / sqrt(d)) * (rand(d, n) - 0.5);
 
-U = dlmread('initial_model_P');
-V = dlmread('initial_model_Q');
-
-solver = 'als';
+solver = 'gauss';
 env = 'cpu';
 
-[U, V] = mf_train(R, U', V', U_reg, V_reg, epsilon, max_iter, R_test, d, solver, env);
+[U, V] = mf_train(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, d, solver, env);
 
 % do prediction
 %y_tilde = fm_predict(X_test, w, U, V);
