@@ -36,7 +36,7 @@ V = dlmread('initial_model_Q');
 %solver = 'als';
 %env = 'cpu';
 
-[U, V] = mf_train(R, U', V', U_reg, V_reg, epsilon, max_iter, R_test, d, solver, env);
+[U, V] = mf_train(R, U', V', U_reg, V_reg, epsilon, max_iter, R_test, solver, env);
 % do prediction
 %y_tilde = fm_predict(X_test, w, U, V);
 %display(sprintf('test accuracy: %f', sum(sign(y_tilde) == y_test)/size(y_test,1)));

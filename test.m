@@ -31,7 +31,7 @@ V = 2 * (0.1 / sqrt(d)) * (rand(d, n) - 0.5);
 solver = 'gauss';
 env = 'cpu';
 
-[U, V] = mf_train(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, d, solver, env);
+[U, V] = mf_train(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, solver, env);
 
 % do prediction
 %y_tilde = fm_predict(X_test, w, U, V);
