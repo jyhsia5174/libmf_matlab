@@ -28,7 +28,7 @@ rand('seed', 0);
 U = 2 * (0.1 / sqrt(d)) * (rand(d, m) - 0.5);
 V = 2 * (0.1 / sqrt(d)) * (rand(d, n) - 0.5);
 
-solver = 'gauss';
+solver = 'alscg';
 env = 'cpu';
 
 [U, V] = mf_train(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, solver, env);
