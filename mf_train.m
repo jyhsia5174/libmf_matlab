@@ -1,5 +1,5 @@
 function [U, V] = mf_train(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, solver, env)
-    % function [U, V] = fm_train(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test)
+    % function [U, V] = mf_train(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test)
     % Inputs:
     %   R: the sparse (n-by-m) rating matrix
     %   U, V: the interaction (d-by-m) and (d-by-n) matrices, where d is latent vector size.
@@ -21,34 +21,12 @@ function [U, V] = mf_train(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, sol
 end
 
 function [U V] = alternating_least_square_cg_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, solver, env)
-    l = nnz(R);
-    nnz_R_test = nnz(R_test);
-
     [i_idx_R, j_idx_R, vals_R] = find(R);
     [i_idx_R_test, j_idx_R_test, vals_R_test] = find(R_test);
     R_idx = [i_idx_R, j_idx_R];
     R_test_idx = [i_idx_R_test, j_idx_R_test];
-    total_t = 0;
-
-    if strcmp(solver, 'als')
-        uni_i_idx_R = unique(i_idx_R);
-        uni_j_idx_R = unique(j_idx_R);
-        U = U(1:d, :);
-        V = V(1:d, :);
-
-        for i = 1:length(uni_i_idx_R)
-            m2ns{uni_i_idx_R(i)} = find(R(uni_i_idx_R(i), :));
-        end
-
-        for i = 1:length(uni_j_idx_R)
-            n2ms{uni_j_idx_R(i)} = find(R(:, uni_j_idx_R(i))');
-        end
-
-    end
 
     if strcmp(env, 'gpu')
-        R = gpuArray(R);
-        R_test = gpuArray(R_test);
         U = gpuArray(U);
         V = gpuArray(V);
         U_reg = gpuArray(U_reg);
@@ -57,28 +35,26 @@ function [U V] = alternating_least_square_cg_solver(R, U, V, U_reg, V_reg, epsil
 
     print(solver, env);
 
+    total_t = 0;
+
     for k = 1:max_iter
 
         if (k == 1)
             B = get_embedding_inner(U, V, i_idx_R, j_idx_R, env) - R;
-            G = [U .* U_reg' V .* V_reg'] + [V * B' U * B];
+        end
+
+        G = [U .* U_reg' V .* V_reg'] + [V * B' U * B];
+
+        if (k == 1)
             G_norm_0 = norm(G, 'fro');
-        else
-            G = [U .* U_reg' V .* V_reg'] + [V * B' U * B];
-            G_norm = norm(G, 'fro');
-
-            if (G_norm <= epsilon * G_norm_0)
-                fprintf('Newton stopping condition');
-                break;
-            end
-
+        elseif (norm(G, 'fro') <= epsilon * G_norm_0)
+            fprintf('Newton stopping condition');
+            break;
         end
 
         tic;
-        GU = U .* U_reg' + V * B';
-        [U, B, cg_iters_U] = update_block_alscg(U, V, B, GU, U_reg, 'no_transposed', i_idx_R, j_idx_R, env);
-        GV = V .* V_reg' + U * B;
-        [V, B, cg_iters_V] = update_block_alscg(V, U, B, GV, V_reg, 'transposed', i_idx_R, j_idx_R, env);
+        [U, B, cg_iters_U] = update_block_alscg(U, V, B, U_reg, R_idx, env, 'no_transposed');
+        [V, B, cg_iters_V] = update_block_alscg(V, U, B, V_reg, R_idx, env, 'transposed');
         total_t = total_t + toc;
 
         print_results_alscg(k, total_t, cg_iters_U, cg_iters_V, U, V, R_test, R_test_idx, U_reg, V_reg, B, env);
@@ -90,11 +66,17 @@ function [U V] = alternating_least_square_cg_solver(R, U, V, U_reg, V_reg, epsil
 
 end
 
-function [U, B, cg_iters] = update_block_alscg(U, V, B, G, reg, option, i_idx_R, j_idx_R, env)
+function [U, B, cg_iters] = update_block_alscg(U, V, B, reg, R_idx, env, option)
     eta = 0.3;
     cg_max_iter = 20;
-    Su = zeros(size(G));
-    C = -G;
+    Su = zeros(size(U));
+
+    if strcmp(option, 'transposed')
+        C =- (U .* reg' + V * B);
+    else
+        C =- (U .* reg' + V * B');
+    end
+
     D = C;
     gamma_0 = sum(sum(C .* C));
     gamma = gamma_0;
@@ -104,10 +86,10 @@ function [U, B, cg_iters] = update_block_alscg(U, V, B, G, reg, option, i_idx_R,
         cg_iters = cg_iters + 1;
 
         if strcmp(option, 'transposed')
-            Z = get_embedding_inner(V, D, i_idx_R, j_idx_R, env);
+            Z = get_embedding_inner(V, D, R_idx(:, 1), R_idx(:, 2), env);
             Dh = D .* reg' + V * Z;
         else
-            Z = get_embedding_inner(D, V, i_idx_R, j_idx_R, env);
+            Z = get_embedding_inner(D, V, R_idx(:, 1), R_idx(:, 2), env);
             Dh = D .* reg' + V * Z';
         end
 
@@ -127,16 +109,13 @@ function [U, B, cg_iters] = update_block_alscg(U, V, B, G, reg, option, i_idx_R,
     end
 
     if strcmp(option, 'transposed')
-        Delta = get_embedding_inner(V, Su, i_idx_R, j_idx_R, env);
+        Delta = get_embedding_inner(V, Su, R_idx(:, 1), R_idx(:, 2), env);
     else
-        Delta = get_embedding_inner(Su, V, i_idx_R, j_idx_R, env);
+        Delta = get_embedding_inner(Su, V, R_idx(:, 1), R_idx(:, 2), env);
     end
 
-    B_new = B + Delta;
-    USu = sum(U .* Su);
-    SuSu = sum(Su .* Su);
     U = U + Su;
-    B = B_new;
+    B = B + Delta;
 end
 
 function [U, V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, solver, env)
@@ -147,8 +126,6 @@ function [U, V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, 
     total_t = 0;
 
     if strcmp(env, 'gpu')
-        R = gpuArray(R);
-        R_test = gpuArray(R_test);
         U = gpuArray(U);
         V = gpuArray(V);
         U_reg = gpuArray(U_reg);
@@ -161,17 +138,15 @@ function [U, V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, 
 
         if (k == 1)
             B = get_embedding_inner(U, V, i_idx_R, j_idx_R, env) - R;
-            G = [U .* U_reg' V .* V_reg'] + [V * B' U * B];
+        end
+
+        G = [U .* U_reg' V .* V_reg'] + [V * B' U * B];
+
+        if (k == 1)
             G_norm_0 = norm(G, 'fro');
-        else
-            G = [U .* U_reg' V .* V_reg'] + [V * B' U * B];
-            G_norm = norm(G, 'fro');
-
-            if (G_norm <= epsilon * G_norm_0)
-                fprintf('Newton stopping condition');
-                break;
-            end
-
+        elseif (norm(G, 'fro') <= epsilon * G_norm_0)
+            fprintf('Newton stopping condition');
+            break;
         end
 
         tic;
@@ -297,8 +272,7 @@ function Z = get_embedding_inner(U, V, i_idx, j_idx, env)
 end
 
 function [] = print(solver, env)
-    fprintf('solver: %5s\n', solver);
-    fprintf('env: %3s\n', env);
+    fprintf('Using ''%5s'' solver with ''%3s'' env.\n', solver, env);
 
     if strcmp(solver, 'gauss')
         fprintf('%4s  %15s  %3s  %3s  %15s  %15s  %15s  %15s  %15s\n', 'iter', 'time', '#cg', '#ls', 'obj', '|G|', 'test_loss', '|G_U|', '|G_V|', 'loss');
