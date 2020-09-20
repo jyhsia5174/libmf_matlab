@@ -1,6 +1,14 @@
 # tags
-
 tags
 
 # tmp file
 *.swp
+*.tmp
+
+# binary files
+*.mexa64
+
+# data link
+trva
+va
+te
