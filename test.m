@@ -1,6 +1,6 @@
 % set model parameters
 lambda_U = 0.5; lambda_V = 0.5; d = 8;
-tr = 'small.tr'; va = 'small.va';
+tr = 'trva'; va = 'va';
 
 % set training algorithm's parameters
 epsilon = 1e-5;
