@@ -7,6 +7,7 @@ tags
 
 # binary files
 *.mexa64
+*.o
 
 # data link
 trva

@@ -12,35 +12,43 @@ function [U, V] = mf_train(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, sol
     % Outputs:
     %   U, V: the interaction (d-by-m) and (d-by-n) matrices.
 
-    if strcmp(solver, 'gauss')
-        [U V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, solver, env);
-    elseif strcmp(solver, 'alscg')
-        [U V] = alternating_least_square_cg_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, solver, env);
-    end
+    print(solver, env);
 
-end
-
-function [U V] = alternating_least_square_cg_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, solver, env)
-    [i_idx_R, j_idx_R, vals_R] = find(R);
-    [i_idx_R_test, j_idx_R_test, vals_R_test] = find(R_test);
-    R_idx = [i_idx_R, j_idx_R];
-    R_test_idx = [i_idx_R_test, j_idx_R_test];
+    global get_embedding_inner get_cross_embedding_inner;
 
     if strcmp(env, 'gpu')
         U = gpuArray(U);
         V = gpuArray(V);
         U_reg = gpuArray(U_reg);
         V_reg = gpuArray(V_reg);
+        get_embedding_inner = @get_embedding_inner_gpu;
+        get_cross_embedding_inner = @get_cross_embedding_inner_gpu;
+    else
+        get_embedding_inner = @get_embedding_inner_cpu;
+        get_cross_embedding_inner = @get_cross_embedding_inner_cpu;
     end
 
-    print(solver, env);
+    if strcmp(solver, 'gauss')
+        [U V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test);
+    elseif strcmp(solver, 'alscg')
+        [U V] = alternating_least_square_cg_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test);
+    end
+
+end
+
+function [U V] = alternating_least_square_cg_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, solver)
+    global get_embedding_inner;
+    [i_idx_R, j_idx_R, vals_R] = find(R);
+    [i_idx_R_test, j_idx_R_test, vals_R_test] = find(R_test);
+    R_idx = [i_idx_R, j_idx_R];
+    R_test_idx = [i_idx_R_test, j_idx_R_test];
 
     total_t = 0;
 
     for k = 1:max_iter
 
         if (k == 1)
-            B = get_embedding_inner(U, V, i_idx_R, j_idx_R, env) - R;
+            B = get_embedding_inner(U, V, i_idx_R, j_idx_R) - R;
         end
 
         G = [U .* U_reg' V .* V_reg'] + [V * B' U * B];
@@ -53,11 +61,11 @@ function [U V] = alternating_least_square_cg_solver(R, U, V, U_reg, V_reg, epsil
         end
 
         tic;
-        [U, B, cg_iters_U] = update_block_alscg(U, V, B, U_reg, R_idx, env, 'no_transposed');
-        [V, B, cg_iters_V] = update_block_alscg(V, U, B, V_reg, R_idx, env, 'transposed');
+        [U, B, cg_iters_U] = update_block_alscg(U, V, B, U_reg, R_idx, 'no_transposed');
+        [V, B, cg_iters_V] = update_block_alscg(V, U, B, V_reg, R_idx, 'transposed');
         total_t = total_t + toc;
 
-        print_results_alscg(k, total_t, cg_iters_U, cg_iters_V, U, V, R_test, R_test_idx, U_reg, V_reg, B, env);
+        print_results_alscg(k, total_t, cg_iters_U, cg_iters_V, U, V, R_test, R_test_idx, U_reg, V_reg, B);
     end
 
     if (k == max_iter)
@@ -66,7 +74,8 @@ function [U V] = alternating_least_square_cg_solver(R, U, V, U_reg, V_reg, epsil
 
 end
 
-function [U, B, cg_iters] = update_block_alscg(U, V, B, reg, R_idx, env, option)
+function [U, B, cg_iters] = update_block_alscg(U, V, B, reg, R_idx, option)
+    global get_embedding_inner;
     eta = 0.3;
     cg_max_iter = 20;
     Su = zeros(size(U));
@@ -86,10 +95,10 @@ function [U, B, cg_iters] = update_block_alscg(U, V, B, reg, R_idx, env, option)
         cg_iters = cg_iters + 1;
 
         if strcmp(option, 'transposed')
-            Z = get_embedding_inner(V, D, R_idx(:, 1), R_idx(:, 2), env);
+            Z = get_embedding_inner(V, D, R_idx(:, 1), R_idx(:, 2));
             Dh = D .* reg' + V * Z;
         else
-            Z = get_embedding_inner(D, V, R_idx(:, 1), R_idx(:, 2), env);
+            Z = get_embedding_inner(D, V, R_idx(:, 1), R_idx(:, 2));
             Dh = D .* reg' + V * Z';
         end
 
@@ -109,35 +118,27 @@ function [U, B, cg_iters] = update_block_alscg(U, V, B, reg, R_idx, env, option)
     end
 
     if strcmp(option, 'transposed')
-        Delta = get_embedding_inner(V, Su, R_idx(:, 1), R_idx(:, 2), env);
+        Delta = get_embedding_inner(V, Su, R_idx(:, 1), R_idx(:, 2));
     else
-        Delta = get_embedding_inner(Su, V, R_idx(:, 1), R_idx(:, 2), env);
+        Delta = get_embedding_inner(Su, V, R_idx(:, 1), R_idx(:, 2));
     end
 
     U = U + Su;
     B = B + Delta;
 end
 
-function [U, V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, solver, env)
+function [U, V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, solver)
+    global get_embedding_inner get_cross_embedding_inner;
     [i_idx_R, j_idx_R, vals_R] = find(R);
     [i_idx_R_test, j_idx_R_test, vals_R_test] = find(R_test);
     R_idx = [i_idx_R, j_idx_R];
     R_test_idx = [i_idx_R_test, j_idx_R_test];
     total_t = 0;
 
-    if strcmp(env, 'gpu')
-        U = gpuArray(U);
-        V = gpuArray(V);
-        U_reg = gpuArray(U_reg);
-        V_reg = gpuArray(V_reg);
-    end
-
-    print(solver, env);
-
     for k = 1:max_iter
 
         if (k == 1)
-            B = get_embedding_inner(U, V, i_idx_R, j_idx_R, env) - R;
+            B = get_embedding_inner(U, V, i_idx_R, j_idx_R) - R;
         end
 
         G = [U .* U_reg' V .* V_reg'] + [V * B' U * B];
@@ -152,9 +153,9 @@ function [U, V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, 
         tic;
         nu = 0.1;
         min_step_size = 1e-20;
-        [Su, Sv, cg_iters] = cg(U, V, G, U_reg, V_reg, R_idx, env);
-        Delta_1 = get_cross_embedding_inner(Su, Sv, U, V, R_idx(:, 1), R_idx(:, 2), env);
-        Delta_2 = get_embedding_inner(Su, Sv, R_idx(:, 1), R_idx(:, 2), env);
+        [Su, Sv, cg_iters] = cg(U, V, G, U_reg, V_reg, R_idx);
+        Delta_1 = get_cross_embedding_inner(Su, Sv, U, V, R_idx(:, 1), R_idx(:, 2));
+        Delta_2 = get_embedding_inner(Su, Sv, R_idx(:, 1), R_idx(:, 2));
         US_u = sum(U .* Su) * U_reg;
         VS_v = sum(V .* Sv) * V_reg;
         SS = sum([Su Sv] .* [Su Sv]) * [U_reg; V_reg];
@@ -185,7 +186,7 @@ function [U, V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, 
 
         total_t = total_t + toc;
 
-        print_results_gauss(k, total_t, cg_iters, ls_steps, U, V, R_test, R_test_idx, U_reg, V_reg, B, env);
+        print_results_gauss(k, total_t, cg_iters, ls_steps, U, V, R_test, R_test_idx, U_reg, V_reg, B);
     end
 
     if (k == max_iter)
@@ -194,7 +195,8 @@ function [U, V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, 
 
 end
 
-function [Su, Sv, cg_iters] = cg(U, V, G, U_reg, V_reg, R_idx, env)
+function [Su, Sv, cg_iters] = cg(U, V, G, U_reg, V_reg, R_idx)
+    global get_embedding_inner get_cross_embedding_inner;
     m = size(U, 2);
     n = size(V, 2);
     eta = 0.3;
@@ -208,7 +210,7 @@ function [Su, Sv, cg_iters] = cg(U, V, G, U_reg, V_reg, R_idx, env)
 
     while (gamma > eta * eta * gamma_0)
         cg_iters = cg_iters + 1;
-        Z = get_cross_embedding_inner(D(:, 1:m), D(:, m + 1:end), U, V, R_idx(:, 1), R_idx(:, 2), env);
+        Z = get_cross_embedding_inner(D(:, 1:m), D(:, m + 1:end), U, V, R_idx(:, 1), R_idx(:, 2));
         Dh = D .* [U_reg; V_reg]' + [V * Z' U * Z];
         alpha = gamma / sum(sum(D .* Dh));
         S = S + alpha * D;
@@ -231,13 +233,9 @@ end
 
 %point wise summation
 %z_(m,n) = v_n^T*s_u^m + u_m^T*s_v^n
-function Z = get_cross_embedding_inner(Su, Sv, U, V, i_idx, j_idx, env)
+function Z = get_cross_embedding_inner_gpu(Su, Sv, U, V, i_idx, j_idx)
     l = size(i_idx, 1);
-    vals = zeros(1, l);
-
-    if strcmp(env, 'gpu')
-        vals = gpuArray(vals);
-    end
+    vals = gpuArray(zeros(1, l));
 
     num_batches = 10;
     bsize = ceil(l / num_batches);
@@ -252,13 +250,9 @@ end
 
 %point wise summation
 % z_(m,n) = u_m^T*v_n
-function Z = get_embedding_inner(U, V, i_idx, j_idx, env)
+function Z = get_embedding_inner_gpu(U, V, i_idx, j_idx)
     l = size(i_idx, 1);
-    vals = zeros(1, l);
-
-    if strcmp(env, 'gpu')
-        vals = gpuArray(vals);
-    end
+    vals = gpuArray(zeros(1, l));
 
     num_batches = 10;
     bsize = ceil(l / num_batches);
@@ -284,7 +278,8 @@ function [] = print(solver, env)
 
 end
 
-function [] = print_results_gauss(k, total_t, cg_iters, ls_steps, U, V, R_test, R_test_idx, U_reg, V_reg, B, env)
+function [] = print_results_gauss(k, total_t, cg_iters, ls_steps, U, V, R_test, R_test_idx, U_reg, V_reg, B)
+    global get_embedding_inner;
     m = size(U, 2);
     n = size(V, 2);
 
@@ -293,7 +288,7 @@ function [] = print_results_gauss(k, total_t, cg_iters, ls_steps, U, V, R_test, 
     f = 0.5 * (sum(U .* U) * U_reg + sum(V .* V) * V_reg) + loss;
 
     % Test Loss
-    Y_test_tilde = get_embedding_inner(U, V, R_test_idx(:, 1), R_test_idx(:, 2), env);
+    Y_test_tilde = get_embedding_inner(U, V, R_test_idx(:, 1), R_test_idx(:, 2));
     test_loss = sqrt(full(sum(sum((R_test - Y_test_tilde) .* (R_test - Y_test_tilde)))) / size(R_test_idx, 1));
 
     % Gradient
@@ -305,7 +300,8 @@ function [] = print_results_gauss(k, total_t, cg_iters, ls_steps, U, V, R_test, 
     fprintf('%4d  %15.3f  %3d  %3d  %15.3f  %15.6f  %15.6f  %15.6f  %15.6f  %15.3f\n', k, total_t, cg_iters, ls_steps, f, G_norm, test_loss, GU_norm, GV_norm, loss);
 end
 
-function [] = print_results_alscg(k, total_t, cg_iters_U, cg_iters_V, U, V, R_test, R_test_idx, U_reg, V_reg, B, env)
+function [] = print_results_alscg(k, total_t, cg_iters_U, cg_iters_V, U, V, R_test, R_test_idx, U_reg, V_reg, B)
+    global get_embedding_inner;
     m = size(U, 2);
     n = size(V, 2);
 
@@ -314,7 +310,7 @@ function [] = print_results_alscg(k, total_t, cg_iters_U, cg_iters_V, U, V, R_te
     f = 0.5 * (sum(U .* U) * U_reg + sum(V .* V) * V_reg) + loss;
 
     % Test Loss
-    Y_test_tilde = get_embedding_inner(U, V, R_test_idx(:, 1), R_test_idx(:, 2), env);
+    Y_test_tilde = get_embedding_inner(U, V, R_test_idx(:, 1), R_test_idx(:, 2));
     test_loss = sqrt(full(sum(sum((R_test - Y_test_tilde) .* (R_test - Y_test_tilde)))) / size(R_test_idx, 1));
 
     % Gradient

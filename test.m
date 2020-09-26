@@ -1,6 +1,6 @@
 % set model parameters
 lambda_U = 0.5; lambda_V = 0.5; d = 8;
-tr = 'trva'; va = 'va';
+tr = 'small.tr'; va = 'small.va';
 
 % set training algorithm's parameters
 epsilon = 1e-5;
@@ -28,7 +28,7 @@ rand('seed', 0);
 U = 2 * (0.1 / sqrt(d)) * (rand(d, m) - 0.5);
 V = 2 * (0.1 / sqrt(d)) * (rand(d, n) - 0.5);
 
-solver = 'alscg';
+solver = 'gauss';
 env = 'cpu';
 
 [U, V] = mf_train(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, solver, env);
