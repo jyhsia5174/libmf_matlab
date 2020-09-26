@@ -36,7 +36,7 @@ function [U, V] = mf_train(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, sol
 
 end
 
-function [U V] = alternating_least_square_cg_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, solver)
+function [U V] = alternating_least_square_cg_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test)
     global get_embedding_inner;
     [i_idx_R, j_idx_R, vals_R] = find(R);
     [i_idx_R_test, j_idx_R_test, vals_R_test] = find(R_test);
@@ -127,7 +127,7 @@ function [U, B, cg_iters] = update_block_alscg(U, V, B, reg, R_idx, option)
     B = B + Delta;
 end
 
-function [U, V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, solver)
+function [U, V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test)
     global get_embedding_inner get_cross_embedding_inner;
     [i_idx_R, j_idx_R, vals_R] = find(R);
     [i_idx_R_test, j_idx_R_test, vals_R_test] = find(R_test);
