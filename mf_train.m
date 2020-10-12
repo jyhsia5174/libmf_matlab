@@ -31,24 +31,24 @@ function [U, V] = mf_train(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, sol
     if strcmp(solver, 'gauss')
         [U V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test);
     elseif strcmp(solver, 'alscg')
-        [U V] = alternating_least_square_cg_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test);
+        [U V] = als_cg_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test);
     end
 
 end
 
-function [U V] = alternating_least_square_cg_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test)
+function [U V] = als_cg_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test)
     global get_embedding_inner;
-    [i_idx_R, j_idx_R, vals_R] = find(R);
-    [i_idx_R_test, j_idx_R_test, vals_R_test] = find(R_test);
-    R_idx = [i_idx_R, j_idx_R];
-    R_test_idx = [i_idx_R_test, j_idx_R_test];
+    [R_i, R_j, vals_R] = find(R);
+    [R_i_test, R_j_test, vals_R_test] = find(R_test);
+    R_idx = [R_i, R_j];
+    R_test_idx = [R_i_test, R_j_test];
 
-    total_t = 0;
+    total_time = 0;
 
     for k = 1:max_iter
 
         if (k == 1)
-            B = get_embedding_inner(U, V, i_idx_R, j_idx_R) - R;
+            B = get_embedding_inner(U, V, R_i, R_j) - R;
         end
 
         G = [U .* U_reg' V .* V_reg'] + [V * B' U * B];
@@ -63,13 +63,13 @@ function [U V] = alternating_least_square_cg_solver(R, U, V, U_reg, V_reg, epsil
         tic;
         [U, B, cg_iters_U] = update_block_alscg(U, V, B, U_reg, R_idx, 'no_transposed');
         [V, B, cg_iters_V] = update_block_alscg(V, U, B, V_reg, R_idx, 'transposed');
-        total_t = total_t + toc;
+        total_time = total_time + toc;
 
-        print_results_alscg(k, total_t, cg_iters_U, cg_iters_V, U, V, R_test, R_test_idx, U_reg, V_reg, B);
+        print_results(k, total_time, {'alscg', cg_iters_U, cg_iters_V}, U, V, R_test, R_test_idx, U_reg, V_reg, B);
     end
 
     if (k == max_iter)
-        fprintf('Warning: reach max training iteration. Terminate training process.\n');
+        fprintf(2, 'Warning: reach max training iteration. Terminate training process.\n');
     end
 
 end
@@ -81,13 +81,13 @@ function [U, B, cg_iters] = update_block_alscg(U, V, B, reg, R_idx, option)
     Su = zeros(size(U));
 
     if strcmp(option, 'transposed')
-        C =- (U .* reg' + V * B);
+        C = -(U .* reg' + V * B);
     else
-        C =- (U .* reg' + V * B');
+        C = -(U .* reg' + V * B');
     end
 
     D = C;
-    gamma_0 = sum(sum(C .* C));
+    gamma_0 = norm(C, 'fro')^2;
     gamma = gamma_0;
     cg_iters = 0;
 
@@ -105,13 +105,13 @@ function [U, B, cg_iters] = update_block_alscg(U, V, B, reg, R_idx, option)
         alpha = gamma / sum(sum(D .* Dh));
         Su = Su + alpha * D;
         C = C - alpha * Dh;
-        gamma_new = sum(sum(C .* C));
+        gamma_new = norm(C, 'fro')^2;
         beta = gamma_new / gamma;
         D = C + beta * D;
         gamma = gamma_new;
 
         if (cg_iters >= cg_max_iter)
-            fprintf('Warning: reach max CG iteration. CG process is terminated.\n');
+            fprintf(2, 'Warning: reach max CG iteration. CG process is terminated.\n');
             break;
         end
 
@@ -129,16 +129,19 @@ end
 
 function [U, V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test)
     global get_embedding_inner get_cross_embedding_inner;
-    [i_idx_R, j_idx_R, vals_R] = find(R);
-    [i_idx_R_test, j_idx_R_test, vals_R_test] = find(R_test);
-    R_idx = [i_idx_R, j_idx_R];
-    R_test_idx = [i_idx_R_test, j_idx_R_test];
-    total_t = 0;
+    [R_i, R_j, vals_R] = find(R);
+    [R_i_test, R_j_test, vals_R_test] = find(R_test);
+    R_idx = [R_i, R_j];
+    R_test_idx = [R_i_test, R_j_test];
+    total_time = 0;
+
+    nu = 0.1;
+    min_step_size = 1e-20;
 
     for k = 1:max_iter
 
         if (k == 1)
-            B = get_embedding_inner(U, V, i_idx_R, j_idx_R) - R;
+            B = get_embedding_inner(U, V, R_i, R_j) - R;
         end
 
         G = [U .* U_reg' V .* V_reg'] + [V * B' U * B];
@@ -151,13 +154,13 @@ function [U, V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, 
         end
 
         tic;
-        nu = 0.1;
-        min_step_size = 1e-20;
+
         [Su, Sv, cg_iters] = cg(U, V, G, U_reg, V_reg, R_idx);
+
         Delta_1 = get_cross_embedding_inner(Su, Sv, U, V, R_idx(:, 1), R_idx(:, 2));
         Delta_2 = get_embedding_inner(Su, Sv, R_idx(:, 1), R_idx(:, 2));
-        US_u = sum(U .* Su) * U_reg;
-        VS_v = sum(V .* Sv) * V_reg;
+        USu = sum(U .* Su) * U_reg;
+        VSv = sum(V .* Sv) * V_reg;
         SS = sum([Su Sv] .* [Su Sv]) * [U_reg; V_reg];
         GS = sum(sum(G .* [Su Sv]));
         theta = 1;
@@ -166,13 +169,13 @@ function [U, V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, 
         for ls_steps = 0:intmax;
 
             if (theta < min_step_size)
-                fprintf('Warning: step size is too small in line search. Switch to the next block of variables.\n');
+                fprintf(2, 'Warning: step size is too small in line search.\n');
                 return;
             end
 
             B_new = B + theta * Delta_1 + theta * theta * Delta_2;
             B_new_norm = norm(B_new, 'fro')^2;
-            f_diff = 0.5 * (2 * theta * (US_u + VS_v) + theta * theta * SS) + 0.5 * (B_new_norm - B_norm);
+            f_diff = 0.5 * (2 * theta * (USu + VSv) + theta * theta * SS) + 0.5 * (B_new_norm - B_norm);
 
             if (f_diff <= nu * theta * GS)
                 U = U + theta * Su;
@@ -184,13 +187,13 @@ function [U, V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, 
             theta = theta * 0.5;
         end
 
-        total_t = total_t + toc;
+        total_time = total_time + toc;
 
-        print_results_gauss(k, total_t, cg_iters, ls_steps, U, V, R_test, R_test_idx, U_reg, V_reg, B);
+        print_results(k, total_time, {'gauss', cg_iters, ls_steps}, U, V, R_test, R_test_idx, U_reg, V_reg, B);
     end
 
     if (k == max_iter)
-        fprintf('Warning: reach max training iteration. Terminate training process.\n');
+        fprintf(2, 'Warning: reach max training iteration. Terminate training process.\n');
     end
 
 end
@@ -198,37 +201,36 @@ end
 function [Su, Sv, cg_iters] = cg(U, V, G, U_reg, V_reg, R_idx)
     global get_embedding_inner get_cross_embedding_inner;
     m = size(U, 2);
-    n = size(V, 2);
     eta = 0.3;
     cg_max_iter = 20;
     S = zeros(size(G));
     C = -G;
     D = C;
-    gamma_0 = sum(sum(C .* C));
+    gamma_0 = norm(C, 'fro')^2;
     gamma = gamma_0;
     cg_iters = 0;
 
     while (gamma > eta * eta * gamma_0)
         cg_iters = cg_iters + 1;
-        Z = get_cross_embedding_inner(D(:, 1:m), D(:, m + 1:end), U, V, R_idx(:, 1), R_idx(:, 2));
+        Z = get_cross_embedding_inner(D(:, 1:m), D(:, (m + 1):end), U, V, R_idx(:, 1), R_idx(:, 2));
         Dh = D .* [U_reg; V_reg]' + [V * Z' U * Z];
         alpha = gamma / sum(sum(D .* Dh));
         S = S + alpha * D;
         C = C - alpha * Dh;
-        gamma_new = sum(sum(C .* C));
+        gamma_new = norm(C, 'fro')^2;
         beta = gamma_new / gamma;
         D = C + beta * D;
         gamma = gamma_new;
 
         if (cg_iters >= cg_max_iter)
-            fprintf('Warning: reach max CG iteration. CG process is terminated.\n');
+            fprintf(2, 'Warning: reach max CG iteration. CG process is terminated.\n');
             break;
         end
 
     end
 
     Su = S(:, 1:m);
-    Sv = S(:, m + 1:end);
+    Sv = S(:, (m + 1):end);
 end
 
 %point wise summation
@@ -269,57 +271,43 @@ function [] = print(solver, env)
     fprintf('Using ''%5s'' solver with ''%3s'' env.\n', solver, env);
 
     if strcmp(solver, 'gauss')
-        fprintf('%4s  %15s  %3s  %3s  %15s  %15s  %15s  %15s  %15s\n', 'iter', 'time', '#cg', '#ls', 'obj', '|G|', 'test_loss', '|G_U|', '|G_V|', 'loss');
+        fprintf('%4s  %10s  %5s  %5s  %15s  %15s  %15s  %15s  %15s  %15s\n', 'iter', 'time', '#cg', '#ls', 'obj', 'test_loss', '|G|', '|G_U|', '|G_V|', 'loss');
     elseif strcmp(solver, 'alscg')
-        fprintf('%4s  %15s  %3s  %3s  %15s  %15s  %15s  %15s  %15s  %15s\n', 'iter', 'time', '#cg_U', '#cg_V', 'obj', '|G_U|', '|G_V|', 'test_loss', '|G|', 'loss');
+        fprintf('%4s  %10s  %5s  %5s  %15s  %15s  %15s  %15s  %15s  %15s\n', 'iter', 'time', '#cg_U', '#cg_V', 'obj', 'test_loss', '|G|', '|G_U|', '|G_V|', 'loss');
     elseif strcmp(solver, 'als')
-        fprintf('%4s  %15s  %15s  %15s  %15s\n', 'iter', 'time', 'obj', 'test_loss', 'loss');
+        fprintf('%4s  %10s  %15s  %15s  %15s\n', 'iter', 'time', 'obj', 'test_loss', 'loss');
     end
 
 end
 
-function [] = print_results_gauss(k, total_t, cg_iters, ls_steps, U, V, R_test, R_test_idx, U_reg, V_reg, B)
+function [] = print_results(iter, total_time, iter_info, U, V, R_test, R_test_idx, U_reg, V_reg, B)
     global get_embedding_inner;
     m = size(U, 2);
-    n = size(V, 2);
 
     % Function value
-    loss = 0.5 * full(sum(sum(B .* B)));
+    loss = 0.5 * norm(B, 'fro')^2;
     f = 0.5 * (sum(U .* U) * U_reg + sum(V .* V) * V_reg) + loss;
 
     % Test Loss
-    Y_test_tilde = get_embedding_inner(U, V, R_test_idx(:, 1), R_test_idx(:, 2));
-    test_loss = sqrt(full(sum(sum((R_test - Y_test_tilde) .* (R_test - Y_test_tilde)))) / size(R_test_idx, 1));
+    predictions = get_embedding_inner(U, V, R_test_idx(:, 1), R_test_idx(:, 2));
+    test_loss = sqrt(norm(R_test - predictions, 'fro')^2 / nnz(R_test));
 
     % Gradient
     G = [U .* U_reg' V .* V_reg'] + [V * B' U * B];
     G_norm = norm(G, 'fro');
     GU_norm = norm(G(:, 1:m), 'fro');
-    GV_norm = norm(G(:, m + 1:end), 'fro');
+    GV_norm = norm(G(:, (m + 1):end), 'fro');
 
-    fprintf('%4d  %15.3f  %3d  %3d  %15.3f  %15.6f  %15.6f  %15.6f  %15.6f  %15.3f\n', k, total_t, cg_iters, ls_steps, f, G_norm, test_loss, GU_norm, GV_norm, loss);
-end
+    solver = iter_info{1, 1};
 
-function [] = print_results_alscg(k, total_t, cg_iters_U, cg_iters_V, U, V, R_test, R_test_idx, U_reg, V_reg, B)
-    global get_embedding_inner;
-    m = size(U, 2);
-    n = size(V, 2);
+    if strcmp(solver, 'gauss')
+        cg_iters = iter_info{1, 2};
+        ls_steps = iter_info{1, 3};
+        fprintf('%4d  %10.3f  %5d  %5d  %15.3f  %15.6f  %15.6f  %15.6f  %15.6f  %15.3f\n', iter, total_time, cg_iters, ls_steps, f, test_loss, G_norm, GU_norm, GV_norm, loss);
+    elseif strcmp(solver, 'alscg')
+        cg_iters_U = iter_info{1, 2};
+        cg_iters_V = iter_info{1, 3};
+        fprintf('%4d  %10.3f  %5d  %5d  %15.3f  %15.6f  %15.6f  %15.6f  %15.6f  %15.3f\n', iter, total_time, cg_iters_U, cg_iters_V, f, test_loss, G_norm, GU_norm, GV_norm, loss);
+    end
 
-    % Function value
-    loss = 0.5 * full(sum(sum(B .* B)));
-    f = 0.5 * (sum(U .* U) * U_reg + sum(V .* V) * V_reg) + loss;
-
-    % Test Loss
-    Y_test_tilde = get_embedding_inner(U, V, R_test_idx(:, 1), R_test_idx(:, 2));
-    test_loss = sqrt(full(sum(sum((R_test - Y_test_tilde) .* (R_test - Y_test_tilde)))) / size(R_test_idx, 1));
-
-    % Gradient
-    G = [U .* U_reg' V .* V_reg'] + [V * B' U * B];
-    G_norm = norm(G, 'fro');
-    GU_norm = norm(G(:, 1:m), 'fro');
-    GV_norm = norm(G(:, m + 1:end), 'fro');
-    GU = U .* U_reg' + V * B';
-    GV = V .* V_reg' + U * B;
-
-    fprintf('%4d  %15.3f  %3d  %3d  %15.3f  %15.6f  %15.6f  %15.6f  %15.6f  %15.3f\n', k, total_t, cg_iters_U, cg_iters_V, f, GU_norm, GV_norm, test_loss, G_norm, loss);
 end
