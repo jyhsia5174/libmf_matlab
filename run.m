@@ -1,13 +1,17 @@
-function run(solver, enable_gpu, l2, d, t)
+function run(solver, enable_gpu, l2, d, t, eta, cgt)
   % function run(solver, enable_gpu, l2, d, t)
   % Inputs:
   % solver: 
-  % - 0: gauss
-  % - 1: alscg
-  % enable_gpu: (0/1)
+  %   - 0: gauss
+  %   - 1: alscg
+  % enable_gpu: 
+  %   - 0: disable
+  %   - 1: enable
   % l2: regularization
   % d: embedding dimemsion
   % t: iteration
+  % eta: cg tightness
+  % cgt: max cg iteration
 
   % Set terminate condition 
   epsilon = 1e-6;
@@ -46,5 +50,5 @@ function run(solver, enable_gpu, l2, d, t)
   else
     env = 'cpu';
 
-  [U, V] = mf_train(R, U', V', U_reg, V_reg, epsilon, t, R_test, solver, env);
+  [U, V] = mf_train(R, U', V', U_reg, V_reg, epsilon, t, R_test, solver, env, eta, cgt);
 end

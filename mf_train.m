@@ -1,4 +1,4 @@
-function [U, V] = mf_train(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, solver, env)
+function [U, V] = mf_train(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, solver, env, eta, cg_max_iter)
     % function [U, V] = mf_train(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test)
     % Inputs:
     %   R: the sparse (n-by-m) rating matrix
@@ -9,6 +9,8 @@ function [U, V] = mf_train(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, sol
     %   R_test: the sparse (n-by-m) testing rating matrix
     %   solve: use 'gauss' for Gauss-Newton method and 'alscg' for alternating least square with conjugate gradient method.
     %   env: indicate use 'cpu' or 'gpu' solver
+    %   eta: cg tightness
+    %   cg_max_iter: cg max iteration
     % Outputs:
     %   U, V: the interaction (d-by-m) and (d-by-n) matrices.
 
@@ -29,14 +31,14 @@ function [U, V] = mf_train(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, sol
     end
 
     if strcmp(solver, 'gauss')
-        [U V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test);
+        [U V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, eta, cg_max_iter);
     elseif strcmp(solver, 'alscg')
-        [U V] = als_cg_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test);
+        [U V] = als_cg_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, eta, cg_max_iter);
     end
 
 end
 
-function [U V] = als_cg_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test)
+function [U V] = als_cg_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, eta, cg_max_iter)
     global get_embedding_inner;
     [R_i, R_j, vals_R] = find(R);
     [R_i_test, R_j_test, vals_R_test] = find(R_test);
@@ -49,6 +51,9 @@ function [U V] = als_cg_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test)
 
         if (k == 1)
             B = get_embedding_inner(U, V, R_i, R_j) - R;
+            if(0) % Check initial model
+              print_results(0, 0, {'alscg', 0, 0}, U, V, R_test, R_test_idx, U_reg, V_reg, B);
+            end
         end
 
         G = [U .* U_reg' V .* V_reg'] + [V * B' U * B];
@@ -61,8 +66,8 @@ function [U V] = als_cg_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test)
         end
 
         tic;
-        [U, B, cg_iters_U] = update_block_alscg(U, V, B, U_reg, R_idx, 'no_transposed');
-        [V, B, cg_iters_V] = update_block_alscg(V, U, B, V_reg, R_idx, 'transposed');
+        [U, B, cg_iters_U] = update_block_alscg(U, V, B, U_reg, R_idx, 'no_transposed', eta, cg_max_iter);
+        [V, B, cg_iters_V] = update_block_alscg(V, U, B, V_reg, R_idx, 'transposed', eta, cg_max_iter);
         total_time = total_time + toc;
 
         print_results(k, total_time, {'alscg', cg_iters_U, cg_iters_V}, U, V, R_test, R_test_idx, U_reg, V_reg, B);
@@ -74,10 +79,8 @@ function [U V] = als_cg_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test)
 
 end
 
-function [U, B, cg_iters] = update_block_alscg(U, V, B, reg, R_idx, option)
+function [U, B, cg_iters] = update_block_alscg(U, V, B, reg, R_idx, option, eta, cg_max_iter)
     global get_embedding_inner;
-    eta = 0.3;
-    cg_max_iter = 20;
     Su = zeros(size(U));
 
     if strcmp(option, 'transposed')
@@ -127,7 +130,7 @@ function [U, B, cg_iters] = update_block_alscg(U, V, B, reg, R_idx, option)
     B = B + Delta;
 end
 
-function [U, V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test)
+function [U, V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, R_test, eta, cg_max_iter)
     global get_embedding_inner get_cross_embedding_inner;
     [R_i, R_j, vals_R] = find(R);
     [R_i_test, R_j_test, vals_R_test] = find(R_test);
@@ -142,6 +145,9 @@ function [U, V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, 
 
         if (k == 1)
             B = get_embedding_inner(U, V, R_i, R_j) - R;
+            if(0) % Check initial model
+              print_results(0, 0, {'gauss', 0, 0}, U, V, R_test, R_test_idx, U_reg, V_reg, B);
+            end
         end
 
         G = [U .* U_reg' V .* V_reg'] + [V * B' U * B];
@@ -155,7 +161,7 @@ function [U, V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, 
 
         tic;
 
-        [Su, Sv, cg_iters] = cg(U, V, G, U_reg, V_reg, R_idx);
+        [Su, Sv, cg_iters] = cg(U, V, G, U_reg, V_reg, R_idx, eta, cg_max_iter);
 
         Delta_1 = get_cross_embedding_inner(Su, Sv, U, V, R_idx(:, 1), R_idx(:, 2));
         Delta_2 = get_embedding_inner(Su, Sv, R_idx(:, 1), R_idx(:, 2));
@@ -198,11 +204,9 @@ function [U, V] = gauss_newton_solver(R, U, V, U_reg, V_reg, epsilon, max_iter, 
 
 end
 
-function [Su, Sv, cg_iters] = cg(U, V, G, U_reg, V_reg, R_idx)
+function [Su, Sv, cg_iters] = cg(U, V, G, U_reg, V_reg, R_idx, eta, cg_max_iter)
     global get_embedding_inner get_cross_embedding_inner;
     m = size(U, 2);
-    eta = 0.3;
-    cg_max_iter = 20;
     S = zeros(size(G));
     C = -G;
     D = C;
